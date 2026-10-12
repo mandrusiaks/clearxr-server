@@ -1,5 +1,5 @@
 //! Pose math for composing a head-relative controller pose with the runtime's `VIEW` space,
-//! following "Composing poses" in `controller-bridge/protocol/PROTOCOL.md`.
+//! as "On the layer" in `PROTOCOL.md` describes.
 
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub struct Vec3(pub [f32; 3]);

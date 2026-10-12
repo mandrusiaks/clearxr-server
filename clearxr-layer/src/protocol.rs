@@ -1,4 +1,4 @@
-//! Packet formats from `controller-bridge/protocol/PROTOCOL.md`: the controller packet the layer
+//! Packet formats from `PROTOCOL.md`: the controller packet the layer
 //! decodes and the haptic packet it encodes. Version 2 only.
 
 pub const CONTROLLER_MAGIC: u16 = 0x5343;
@@ -207,88 +207,98 @@ impl Reader<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::Value;
 
-    fn vectors() -> Vec<Value> {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/protocol/vectors.json");
-        let file: Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
-        file["vectors"].as_array().unwrap().clone()
-    }
+    /// A packet with both hands tracked, every button bit used, and exactly representable floats.
+    const BOTH_HANDS: &str = "43530203010000000700000000000000cb04fb711f0100008009ea701f01000051033f0000000000000080be0000003f\
+        000000000000803f000080be0000c0be000000bf0000003f000000bf0000003f0000003f000060be0000b0be000010bf\
+        0000003f000000bf0000003f0000003f0000003e000080bd00000000000000000000c03f000040bf00a082711f010000\
+        ff073f00000000000000803f000080bf0000403f0000003f0000803e0000c0be000000bf000000000000000000000000\
+        0000803f0000803e0000b0be000010bf000000bf0000003f000000bf0000003f000000bf0000803e00001040000040c0\
+        000000000000003e";
 
-    fn bytes(vector: &Value) -> Vec<u8> {
-        let hex = vector["hex"].as_str().unwrap();
+    fn bytes(hex: &str) -> Vec<u8> {
         (0..hex.len()).step_by(2).map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap()).collect()
     }
 
-    fn floats<const N: usize>(value: &Value) -> [f32; N] {
-        let array = value.as_array().unwrap();
-        std::array::from_fn(|i| array[i].as_f64().unwrap() as f32)
-    }
-
-    fn pose(value: &Value) -> Pose {
-        Pose { position: floats(&value["position"]), orientation: floats(&value["orientation"]) }
-    }
-
-    fn hand(value: &Value) -> HandBlock {
-        HandBlock {
-            sample_time_ns: value["sampleTimeNs"].as_u64().unwrap(),
-            buttons: value["buttons"].as_u64().unwrap() as u16,
-            tracking_flags: value["trackingFlags"].as_u64().unwrap() as u16,
-            thumbstick: floats(&value["thumbstick"]),
-            trigger: value["trigger"].as_f64().unwrap() as f32,
-            grip: value["grip"].as_f64().unwrap() as f32,
-            grip_pose: pose(&value["gripPose"]),
-            aim_pose: pose(&value["aimPose"]),
-            linear_velocity: floats(&value["linearVelocity"]),
-            angular_velocity: floats(&value["angularVelocity"]),
+    fn both_hands() -> ControllerPacket {
+        ControllerPacket {
+            active_hands: 3,
+            flags: FLAG_HEAD_RELATIVE,
+            sequence: 7,
+            send_time_ns: 1234567890123,
+            hands: [
+                HandBlock {
+                sample_time_ns: 1234550000000,
+                buttons: 849,
+                tracking_flags: 63,
+                thumbstick: [-0.25, 0.5],
+                trigger: 0.0,
+                grip: 1.0,
+                grip_pose: Pose { position: [-0.25, -0.375, -0.5], orientation: [0.5, -0.5, 0.5, 0.5] },
+                aim_pose: Pose { position: [-0.21875, -0.34375, -0.5625], orientation: [0.5, -0.5, 0.5, 0.5] },
+                linear_velocity: [0.125, -0.0625, 0.0],
+                angular_velocity: [0.0, 1.5, -0.75],
+            },
+                HandBlock {
+                sample_time_ns: 1234560000000,
+                buttons: 2047,
+                tracking_flags: 63,
+                thumbstick: [1.0, -1.0],
+                trigger: 0.75,
+                grip: 0.5,
+                grip_pose: Pose { position: [0.25, -0.375, -0.5], orientation: [0.0, 0.0, 0.0, 1.0] },
+                aim_pose: Pose { position: [0.25, -0.34375, -0.5625], orientation: [-0.5, 0.5, -0.5, 0.5] },
+                linear_velocity: [-0.5, 0.25, 2.25],
+                angular_velocity: [-3.0, 0.0, 0.125],
+            },
+            ],
         }
     }
 
     #[test]
-    fn controller_vectors() {
-        let mut checked = 0;
-        for vector in vectors().iter().filter(|v| v["type"] == "controller") {
-            let name = vector["name"].as_str().unwrap();
-            let decoded = decode_controller(&bytes(vector));
-            if vector.get("reject").is_some() {
-                assert!(decoded.is_err(), "{name}: accepted a malformed packet");
-            } else {
-                let fields = &vector["fields"];
-                let expected = ControllerPacket {
-                    active_hands: fields["activeHands"].as_u64().unwrap() as u8,
-                    flags: fields["flags"].as_u64().unwrap() as u16,
-                    sequence: fields["sequence"].as_u64().unwrap() as u32,
-                    send_time_ns: fields["sendTimeNs"].as_u64().unwrap(),
-                    hands: [hand(&fields["left"]), hand(&fields["right"])],
-                };
-                assert_eq!(decoded, Ok(expected), "{name}");
-            }
-            checked += 1;
-        }
-        assert!(checked >= 10);
+    fn decodes_both_hands() {
+        assert_eq!(decode_controller(&bytes(BOTH_HANDS)), Ok(both_hands()));
     }
 
     #[test]
-    fn haptic_vectors() {
-        let mut checked = 0;
-        for vector in vectors().iter().filter(|v| v["type"] == "haptic" && v.get("fields").is_some()) {
-            if vector.get("decodeOnly").is_some() {
-                continue;
-            }
-            let fields = &vector["fields"];
-            let command = match fields["command"].as_u64().unwrap() {
-                0 => HapticCommand::Apply {
-                    duration_ns: fields["durationNs"].as_u64().unwrap(),
-                    frequency: fields["frequency"].as_f64().unwrap() as f32,
-                    amplitude: fields["amplitude"].as_f64().unwrap() as f32,
-                },
-                _ => HapticCommand::Stop,
-            };
-            let encoded = encode_haptic(fields["hand"].as_u64().unwrap() as u8, command);
-            assert_eq!(encoded.to_vec(), bytes(vector), "{}", vector["name"]);
-            checked += 1;
+    fn ignores_reserved_bits_and_trailing_bytes() {
+        let mut packet = bytes(BOTH_HANDS);
+        packet[3] |= 0xFC; // activeHands bits 2–7
+        packet[4] |= 0xFE; // flags bits 1–7
+        packet[5] = 0xFF; // flags bits 8–15
+        packet[6..8].fill(0xFF);
+        packet[12..16].fill(0xFF);
+        for base in [24, 136] {
+            packet[base + 9] |= 0xF8; // buttons bits 11–15
+            packet[base + 10] |= 0x80; // trackingFlags bits 7–15
+            packet[base + 11] = 0xFF;
+            packet[base + 12..base + 16].fill(0xFF);
         }
-        assert_eq!(checked, 3);
+        packet.extend_from_slice(&[0xAB; 8]);
+        assert_eq!(decode_controller(&packet), Ok(both_hands()));
+    }
+
+    #[test]
+    fn rejects_malformed_packets() {
+        let packet = bytes(BOTH_HANDS);
+        assert_eq!(decode_controller(&[]), Err(Reject::TooShort));
+        assert_eq!(decode_controller(&packet[..3]), Err(Reject::TooShort));
+        assert_eq!(decode_controller(&packet[..CONTROLLER_SIZE - 1]), Err(Reject::TooShort));
+        for version in [0, 1, 3] {
+            let mut other = packet.clone();
+            other[2] = version;
+            assert_eq!(decode_controller(&other), Err(Reject::UnknownVersion));
+        }
+        let mut haptic = packet.clone();
+        haptic[0..2].copy_from_slice(&HAPTIC_MAGIC.to_le_bytes());
+        assert_eq!(decode_controller(&haptic), Err(Reject::NotController));
+    }
+
+    #[test]
+    fn encodes_haptics() {
+        let apply = HapticCommand::Apply { duration_ns: 100000000, frequency: 160.0, amplitude: 0.75 };
+        assert_eq!(encode_haptic(0, apply).to_vec(), bytes("564802000000000000e1f50500000000000020430000403f"));
+        assert_eq!(encode_haptic(1, HapticCommand::Stop).to_vec(), bytes("564802010100000000000000000000000000000000000000"));
     }
 
     #[test]

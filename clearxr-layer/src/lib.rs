@@ -2,7 +2,7 @@
 //! data channel: PSVR2 Sense controller state, which it presents to the game as Oculus Touch (or
 //! Khronos simple) controllers (action states, grip and aim poses, the interaction profile, and
 //! haptics), and stream configuration, which it writes to the CloudXR runtime's settings.
-//! `protocol/PROTOCOL.md` specifies the controller packets.
+//! `PROTOCOL.md` specifies the controller packets.
 
 mod bindings;
 mod channel;
