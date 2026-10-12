@@ -84,6 +84,10 @@ struct ApiLayerNextInfo {
 fn log_file() -> &'static Mutex<Option<std::fs::File>> {
     static FILE: std::sync::OnceLock<Mutex<Option<std::fs::File>>> = std::sync::OnceLock::new();
     FILE.get_or_init(|| {
+        // Unit tests run on developers' machines and must not write to the user's log.
+        if cfg!(test) {
+            return Mutex::new(None);
+        }
         let file = std::env::var_os("LOCALAPPDATA").and_then(|dir| {
             let dir = std::path::PathBuf::from(dir).join("ClearXR");
             std::fs::create_dir_all(&dir).ok()?;
